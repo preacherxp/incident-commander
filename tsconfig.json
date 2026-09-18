@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/scenarios" },
+    { "path": "packages/cards" },
+    { "path": "packages/db" },
+    { "path": "packages/ai" },
+    { "path": "apps/api" }
+  ]
+}

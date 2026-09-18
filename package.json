@@ -1,0 +1,32 @@
+{
+  "name": "incident-commander",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tests/*"
+  ],
+  "scripts": {
+    "dev": "bun run scripts/dev.ts",
+    "dev:web": "bun run --filter @incident-commander/web dev",
+    "dev:api": "bun run --filter @incident-commander/api dev",
+    "build": "bun run --filter @incident-commander/web build && bun run --filter @incident-commander/api build",
+    "typecheck": "tsc -b --pretty false && bun run --filter @incident-commander/web typecheck",
+    "lint": "bun run scripts/lint.ts",
+    "test": "bun test packages apps/api",
+    "test:e2e": "bun run --filter @incident-commander/e2e test",
+    "db:generate": "bun run --filter @incident-commander/db db:generate",
+    "db:migrate": "bun run --filter @incident-commander/db db:migrate",
+    "db:seed": "bun run --filter @incident-commander/db db:seed",
+    "db:reset": "bun run scripts/db-reset.ts",
+    "deploy:build": "docker compose --env-file .env.production -f infra/compose.prod.yaml build",
+    "deploy:up": "docker compose --env-file .env.production -f infra/compose.prod.yaml up -d",
+    "deploy:down": "docker compose --env-file .env.production -f infra/compose.prod.yaml down",
+    "deploy:logs": "docker compose --env-file .env.production -f infra/compose.prod.yaml logs -f caddy app"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.3"
+  }
+}

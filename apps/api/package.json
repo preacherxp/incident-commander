@@ -1,0 +1,22 @@
+{
+  "name": "@incident-commander/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --env-file=../../.env --watch src/index.ts",
+    "start": "bun --env-file=../../.env src/index.ts",
+    "build": "bun build src/index.ts --target bun --outdir dist",
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@incident-commander/ai": "workspace:*",
+    "@incident-commander/cards": "workspace:*",
+    "@incident-commander/contracts": "workspace:*",
+    "@incident-commander/db": "workspace:*",
+    "@incident-commander/scenarios": "workspace:*",
+    "hono": "^4.7.0",
+    "zod": "^3.25.0"
+  }
+}

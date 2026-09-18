@@ -1,0 +1,22 @@
+# Caddy terminates TLS and reverse-proxies the Bun app.
+# Caddy obtains and renews certificates automatically for the public hostname.
+{$APP_DOMAIN:incident.purecode.sh} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	reverse_proxy app:3000 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

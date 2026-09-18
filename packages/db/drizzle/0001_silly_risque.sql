@@ -1,0 +1,2 @@
+ALTER TABLE "run_inputs" DROP CONSTRAINT "run_inputs_type_valid";--> statement-breakpoint
+ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_type_valid" CHECK ("run_inputs"."type" in ('play_card','end_turn','draft_pick'));

@@ -1,0 +1,99 @@
+name: incident-commander
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: incident_commander
+      POSTGRES_USER: incident_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - incident_prod_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["bun", "packages/db/dist/migrate.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks: [internal]
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN in .env.production}
+      WEB_DIST_PATH: /app/apps/web/dist
+      AI_PROVIDER: ${AI_PROVIDER:-disabled}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_DECISIONS_URL: ${OPENROUTER_DECISIONS_URL:-https://openrouter.ai/api/alpha/decisions}
+      OPENROUTER_MODEL_ID: ${OPENROUTER_MODEL_ID:-typesafe/jev-1.13}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-Incident Commander}
+      INTERPRETER_TIMEOUT_MS: ${INTERPRETER_TIMEOUT_MS:-8000}
+      INTERPRETER_PROMPT_VERSION: ${INTERPRETER_PROMPT_VERSION:-ic-commands-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-incident.purecode.sh}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - incident_caddy_data:/data
+      - incident_caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [internal]
+
+volumes:
+  incident_prod_pgdata:
+  incident_caddy_data:
+  incident_caddy_config:
+
+networks:
+  internal:
