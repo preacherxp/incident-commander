@@ -40,6 +40,7 @@ try {
     }
     console.log(`No change for ${encounter.id}@${encounter.version}.`);
   }
+  console.log("Superseded versions are kept in place so historical runs still resolve their rules.");
 } finally {
   await close();
 }

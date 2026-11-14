@@ -1,5 +1,6 @@
 export type RunRecord = {
   grade: string;
+  score: number;
   totalHarm: number;
   encountersCleared: number;
   outcome: "won" | "lost";
@@ -30,7 +31,22 @@ export function isBetter(candidate: RunRecord, current: RunRecord | null): boole
   if (candidate.encountersCleared !== current.encountersCleared) {
     return candidate.encountersCleared > current.encountersCleared;
   }
+  if (candidate.score !== current.score) return candidate.score > current.score;
   return candidate.totalHarm < current.totalHarm;
+}
+
+export function purgeStaleRecords(live: Array<{ id: string; version: string }>): void {
+  try {
+    const keep = new Set(live.map((entry) => key(entry.id, entry.version)));
+    const remove: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const item = localStorage.key(index);
+      if (item?.startsWith(PREFIX) && !keep.has(item)) remove.push(item);
+    }
+    for (const item of remove) localStorage.removeItem(item);
+  } catch {
+    /* Best scores are optional. */
+  }
 }
 
 export function writeRecordIfBest(

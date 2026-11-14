@@ -1,58 +1,78 @@
-# Scenario authoring notes
+# Authoring encounters
 
-Scenarios are immutable, versioned JSON definitions validated by `packages/scenarios`. The server
-owns the canonical definition; the browser bundles the same definition because it is
-browser-authoritative. A definition is hashed with the shared canonical serializer; the hash is
-copied into run metadata and checkpoints.
+An encounter is one incident: a player deck, a Jev deck, two budgets, a round limit, and a briefing.
+Encounters live in `packages/scenarios/src/encounters.ts` and reference cards by id from
+`packages/cards/src/cards.ts`.
 
-## Rules
+## Shape
 
-- Never mutate a published `(id, version)`. Change any tuning value and increment the version.
-  `db:seed` registers a new version, no-ops on an identical hash, and errors on a changed hash at
-  the same version.
-- Preserving a JSON definition does not preserve the simulation code needed for replay. Keep
-  historical engine builds available separately.
-- All values are authored playtest defaults, not measured production behavior.
+```ts
+{
+  id: "friday-1658",
+  version: "1.0.0",            // immutable once seeded
+  engineVersion: CARDS_ENGINE_VERSION,
+  title: "Friday, 16:58",
+  summary: "One or two sentences shown on the shift screen.",
+  difficulty: "Guided · about three minutes",
+  seed: 90210,                 // fixed per encounter: openings are identical every run
+  stabilityTarget: 100,        // player wins at this stability
+  harmBudget: 110,             // player loses at this harm
+  focusPerTurn: 3,
+  handSize: 5,
+  maxRounds: 10,               // losing the SLA if the round counter passes this
+  startingDeck: [...],         // ids of player cards; repeats are allowed
+  rewards: [...],              // ids offered as the draft after the previous incident
+  jevDeck: [...],              // ids of chaos cards; repeats are allowed
+  briefing: { objective, steps, thresholds, impactLimit },
+}
+```
 
-## Schema bounds (rejected, never clamped)
+Encounters run in the order they appear in `ENCOUNTERS`. The live product currently lists only
+`friday-1658`. Later incidents may exist in the same file as unpublished drafts.
 
-- rates: integer 1–32 requests/s per class
-- deadlines: 10–100 ticks · queue caps: 1–256
-- session allowance: 1–256 · checkout instances: 1–3 · workers: 1–16 per instance/service
-- action durations: 1–600 ticks · credits: 0–8
-- exactly two engineer slots in the first release
-- `maxAllowance >= allowance`; expansion headroom needs a positive `expandAmount`
-- idle reservations must not exceed the allowance on their own
-- `cohortTailTicks >= deadlineTicks + 300`
+## Authoring rules
 
-## Recovery model
+- **Budgets set the rank.** Per-incident grades are relative to `harmBudget` (S at ≤20%, A at ≤45%,
+  B at ≤70%, C otherwise). A budget of 110 makes an S rank cost 22 harm or fewer.
+- **Round limits are the real clock.** `maxRounds` should be tight enough that a deck which drafts
+  badly cannot out-heal the encounter. `Monday` is deliberately not survivable by healing alone.
+- **Jev's deck should include at least one `sudden` card** as the incident escalates; decks without
+  one can be fully solved by reactive shielding. Put the densest sudden pile on the last incident,
+  not the middle one. Keep sudden cards out of the opening hand — the engine excludes them from the
+  opening reveal, so an all-sudden deck falls back to a telegraph. The player view's surprise cap
+  is the max sudden in that encounter's deck; the table adds it to the forecast.
+- **Reward pools feed the *next* incident's draft.** A run that starts at Monday never drafts, so
+  Monday's balance assumes the starter deck only.
+- **The starter deck is part of the design.** If you change it, every encounter's balance changes.
+  It carries one counter per fault mode (deploy, load, infra) so the first incident can teach
+  negation, and players may hold one leftover card into the next round.
 
-Recovery is evaluated once per simulated second on a **matured arrival cohort**
-`[T − (300 + deadline), T − deadline)`. Metrics become ready at tick `300 + deadline`; before that
-the UI reports "Collecting 30-second window" rather than extrapolating.
+## Fault modes
 
-All conditions must hold: minimum cohort size per class, ≥98% technically resolved, nearest-rank p95
-within target, backlog ≤ 8, database and every checkout instance online, the faulty path inactive
-(express disabled or every instance on v42), zero leaked sessions, and no mutating operation in
-flight. `stableSinceTick` resets on any failed metric evaluation and immediately on a structural
-breach. A win requires `T − stableSinceTick >= recovery.stabilityTicks` (150 ticks, 15 seconds, for
-the first shift).
+Two flags define the archetypes, and probes cover both:
 
-Valid payment declines count as technically resolved. Disabling express reroutes demand through
-ordinary checkout and is tracked separately; it is a disclosed residual restriction, not a failure.
+- Chaos cards can set `pierce: true`, which ignores the player's shield pool (ward and mitigation)
+  while still consuming it. Negation still works. Use it to make rate-limiting the wrong answer.
+- Player cards can set `purge: "all"` or `purge: "infra" | "deploy" | "load" | "people" | "sudden"`,
+  which removes active bleeds. Use it to give removal decks an answer to damage-over-time.
 
-## Teaching scenario: Friday, 16:58
+## Adding a card
 
-Seed `42043`; 16 checkout/s and 8 catalog/s; two v43 checkout instances; allowance 84 with 36 leaked
-sessions per instance (72 total, 80/84 committed at open). Declined express requests on v43 retain
-their database session; v42 releases it. Two recovery routes are intended: rolling rollback to v42,
-or disable express and recycle every instance. Recycling alone relapses because the leak source
-remains active. Database expansion buys bounded headroom but is not a fix.
+1. Add the definition to `PLAYER_CARDS` or `CHAOS_CARDS` in `packages/cards/src/cards.ts`.
+2. Bump `CARDS_ENGINE_VERSION` in `packages/cards/src/types.ts`. This invalidates in-flight saves on
+   purpose: a card that changes behaviour is a new engine.
+3. Reference the id from an encounter's `startingDeck`, `rewards`, or `jevDeck`.
+4. Run `bun run --filter @incident-commander/scenarios balance`. It plays every start with a greedy
+   bot and a passive bot and fails if any start becomes unwinnable or stops punishing passivity.
 
-## Adding a scenario
+## Publishing
 
-1. Add a definition to `packages/scenarios`.
-2. Ensure the scenario and engine `engineVersion` agree.
-3. Add fixture manifests and a genesis checkpoint under the tests that prove conservation,
-   determinism, and both recovery routes.
-4. Run `bun run db:seed` to register the immutable version.
+```sh
+bun run db:generate        # only if the database schema changed
+bun run db:migrate
+bun run db:seed            # registers new id@version rows; refuses to mutate a published version
+```
+
+Content changes to a published encounter must ship as a new `version`. The seed compares the
+canonical content hash and aborts if a published `id@version` changed, which keeps old runs
+replayable.

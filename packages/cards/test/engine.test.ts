@@ -321,19 +321,227 @@ describe("ranking", () => {
   test("an efficient win earns an S and a loss earns an F", () => {
     const definition = encounter("a");
     const won = rankEncounter(
-      { encounterId: "a", outcome: "won", rounds: 3, harm: 10, stability: 100 },
+      { encounterId: "a", outcome: "won", rounds: 3, harm: 10, stats: { damageTaken: 10, cardsPlayed: 8, threatsBlocked: 1, damagePrevented: 0, jevCardsPlayed: 3 }, stability: 100 },
       definition,
     );
     expect(won.grade).toBe("S");
     const costly = rankEncounter(
-      { encounterId: "a", outcome: "won", rounds: 9, harm: 80, stability: 100 },
+      { encounterId: "a", outcome: "won", rounds: 9, harm: 80, stats: { damageTaken: 80, cardsPlayed: 8, threatsBlocked: 1, damagePrevented: 0, jevCardsPlayed: 3 }, stability: 100 },
       definition,
     );
     expect(costly.grade).toBe("C");
     const lost = rankEncounter(
-      { encounterId: "a", outcome: "lost", rounds: 4, harm: 100, stability: 40 },
+      { encounterId: "a", outcome: "lost", rounds: 4, harm: 100, stats: { damageTaken: 100, cardsPlayed: 8, threatsBlocked: 1, damagePrevented: 0, jevCardsPlayed: 3 }, stability: 40 },
       definition,
     );
     expect(lost.grade).toBe("F");
+  });
+});
+
+describe("shield-piercing load faults", () => {
+  test("a piercing threat ignores shields but still consumes them", () => {
+    const data = dataFor(
+      encounter("a", { jevDeck: ["thundering-herd"], startingDeck: ["throttle", "restart"], handSize: 2 }),
+    );
+    let state = createCampaign(["a"], 5, data);
+    state = playWith(state, "throttle", data);
+    expect(state.battle.threat?.mitigated).toBe(10);
+    state = endTurn(state, data);
+    expect(state.battle.harm).toBe(12);
+    expect(state.battle.stats.damagePrevented).toBe(0);
+    expect(state.battle.ward).toBe(0);
+  });
+
+  test("after shields land, Jev prefers a piercing follow-up when it has one", () => {
+    const data = dataFor(
+      encounter("a", {
+        jevDeck: ["traffic-surge", "thundering-herd"],
+        startingDeck: ["throttle", "restart"],
+        handSize: 2,
+        stabilityTarget: 1000,
+        harmBudget: 1000,
+      }),
+    );
+    let state = createCampaign(["a"], 5, data);
+    if (state.battle.threat?.cardId !== "traffic-surge") {
+      state.battle.threat = { cardId: "traffic-surge", revealedRound: 1, mitigated: 0, negated: false };
+    }
+    state = playWith(state, "throttle", data);
+    state = endTurn(state, data);
+    expect(state.battle.stats.damagePrevented).toBeGreaterThanOrEqual(8);
+    expect(state.battle.lastJevCardId).toBe("thundering-herd");
+  });
+
+  test("a matching counter still negates a piercing threat", () => {
+    const data = dataFor(
+      encounter("a", { jevDeck: ["thundering-herd"], startingDeck: ["circuit-breaker", "restart"], handSize: 2 }),
+    );
+    let state = createCampaign(["a"], 5, data);
+    state = playWith(state, "circuit-breaker", data);
+    expect(state.battle.threat?.negated).toBe(true);
+    state = endTurn(state, data);
+    expect(state.battle.harm).toBe(0);
+    expect(state.battle.stats.threatsBlocked).toBe(1);
+  });
+
+  test("a purge card stops every bleed", () => {
+    const data = dataFor(
+      encounter("a", {
+        jevDeck: ["retry-amplifier"],
+        startingDeck: ["restart", "restart", "restart", "restart", "drain-the-queue"],
+        stabilityTarget: 1000,
+        harmBudget: 1000,
+        maxRounds: 8,
+      }),
+    );
+    let state = createCampaign(["a"], 5, data);
+    state = endTurn(state, data);
+    expect(state.battle.dots.length).toBeGreaterThan(0);
+    state = playWith(state, "drain-the-queue", data);
+    expect(state.battle.dots).toHaveLength(0);
+    expect(state.battle.stability).toBe(4);
+  });
+});
+
+describe("arcade round loop", () => {
+  test("an untouched hand cycles and every player card is conserved", () => {
+    const definition = encounter("a", { jevDeck: ["traffic-surge"] });
+    const data = dataFor(definition);
+    const before = createCampaign(["a"], 5, data);
+    const after = endTurn(before, data);
+    expect(after.battle.hand).toEqual(before.battle.drawPile);
+    expect(after.battle.discardPile).toEqual(before.battle.hand);
+    expect([...after.battle.hand, ...after.battle.drawPile, ...after.battle.discardPile].sort())
+      .toEqual([...definition.startingDeck].sort());
+    expect(after.battle.focus).toBe(3);
+  });
+
+  test("ending the round can keep one card and draws around it", () => {
+    const definition = encounter("a", { jevDeck: ["traffic-surge"], startingDeck: ["circuit-breaker", "restart", "restart", "restart", "restart"] });
+    const data = dataFor(definition);
+    const before = createCampaign(["a"], 5, data);
+    const holdIndex = before.battle.hand.indexOf("circuit-breaker");
+    expect(holdIndex).toBeGreaterThanOrEqual(0);
+    const after = must(applyCommand(before, { type: "end_turn", holdCardId: "circuit-breaker", holdIndex }, data));
+    expect(after.battle.hand[0]).toBe("circuit-breaker");
+    expect(after.battle.hand).toHaveLength(5);
+    expect(after.battle.hand.filter((id) => id === "circuit-breaker")).toHaveLength(1);
+    expect(after.battle.discardPile).not.toContain("circuit-breaker");
+    expect(after.log.some((entry) => entry.text.includes("Held Trip the circuit breaker"))).toBe(true);
+    const rejected = applyCommand(before, { type: "end_turn", holdCardId: "circuit-breaker", holdIndex: 99 }, data);
+    expect(rejected.ok).toBe(false);
+  });
+
+  test("full counters stop bleeds, focus drain and draw penalties", () => {
+    const data = dataFor(encounter("a", {
+      jevDeck: ["memory-leak"], startingDeck: ["deploy-freeze", "restart"],
+    }));
+    data.catalog = { ...CARD_CATALOG, "memory-leak": {
+      ...CARD_CATALOG["memory-leak"] as import("../src/index").ChaosCard,
+      drainFocus: 2, drawPenalty: 1, discard: 1,
+    } };
+    const state = playWith(createCampaign(["a"], 5, data), "deploy-freeze", data);
+    const after = endTurn(state, data);
+    expect(after.battle.dots).toHaveLength(0);
+    expect(after.battle.harm).toBe(0);
+    expect(after.battle.focus).toBe(3);
+    expect(after.battle.hand).toHaveLength(2);
+    expect(after.battle.stats.threatsBlocked).toBe(1);
+    expect(selectPlayerView(state, data).threat?.drainFocus).toBe(0);
+  });
+
+  test("uncountered disruption reduces the next hand and base focus", () => {
+    const data = dataFor(encounter("a", { jevDeck: ["retry-storm"] }));
+    const next = endTurn(createCampaign(["a"], 5, data), data);
+    expect(next.battle.hand).toHaveLength(4);
+    const focusData = dataFor(encounter("a", { jevDeck: ["noisy-neighbor"] }));
+    const drained = endTurn(createCampaign(["a"], 5, focusData), focusData);
+    expect(drained.battle.focus).toBe(2);
+    expect(restoreCampaign(drained, focusData).ok).toBe(true);
+  });
+
+  test("the final round ends before Jev draws again and records actual harm", () => {
+    const data = dataFor(encounter("a", { maxRounds: 1, jevDeck: ["traffic-surge"] }));
+    const before = createCampaign(["a"], 5, data);
+    const after = endTurn(before, data);
+    expect(after.phase).toBe("failed");
+    expect(after.battle.round).toBe(1);
+    expect(after.battle.stats.jevCardsPlayed).toBe(1);
+    expect(after.totalHarm).toBe(14);
+    expect(after.results[0]?.rounds).toBe(1);
+  });
+
+  test("a lethal trade cannot bypass the harm limit by reaching the target", () => {
+    const data = dataFor(encounter("a", {
+      startingDeck: ["chaos-monkey"], stabilityTarget: 12, harmBudget: 8,
+    }));
+    const after = playWith(createCampaign(["a"], 5, data), "chaos-monkey", data);
+    expect(after.phase).toBe("failed");
+    expect(after.totalHarm).toBe(8);
+  });
+});
+
+describe("counterplay and arcade scoring", () => {
+  test("shielding a database lock restores contain gains", () => {
+    const data = dataFor(encounter("a", { startingDeck: ["load-shedder", "restart"], jevDeck: ["db-lock"] }));
+    const start = createCampaign(["a"], 5, data);
+    expect(playWith(start, "restart", data).battle.stability).toBe(2);
+    const shielded = playWith(start, "load-shedder", data);
+    expect(selectPlayerView(shielded, data).threat?.recoveryPenalty).toBe(0);
+    expect(playWith(shielded, "restart", data).battle.stability).toBe(8);
+  });
+
+  test("a counter restores recovery and is counted once even on the finishing card", () => {
+    const data = dataFor(encounter("a", { startingDeck: ["failover", "failover"], focusPerTurn: 5, jevDeck: ["db-lock"], stabilityTarget: 34 }));
+    let state = playWith(createCampaign(["a"], 5, data), "failover", data);
+    expect(state.battle.stability).toBe(20);
+    state = playWith(state, "failover", data);
+    expect(state.phase).toBe("complete");
+    expect(state.results[0]?.stats.threatsBlocked).toBe(1);
+    expect(state.results[0]?.stats.damagePrevented).toBe(12);
+  });
+
+  test("runbook setup is consumed by one contain and expires at round end", () => {
+    const data = dataFor(encounter("a", { startingDeck: ["runbook", "restart", "restart"], jevDeck: ["traffic-surge"] }));
+    const prepared = playWith(createCampaign(["a"], 5, data), "runbook", data);
+    expect(prepared.battle.focus).toBe(2);
+    expect(prepared.battle.nextContainBonus).toBe(12);
+    const first = playWith(prepared, "restart", data);
+    expect(first.battle.stability).toBe(20);
+    expect(playWith(first, "restart", data).battle.stability).toBe(28);
+    expect(endTurn(prepared, data).battle.nextContainBonus).toBe(0);
+    expect(restoreCampaign(prepared, data).ok).toBe(true);
+  });
+
+  test("healing cannot erase damage taken or improve the score for an otherwise identical win", () => {
+    const data = dataFor(encounter("a", { startingDeck: ["status-page", "restart"], jevDeck: ["traffic-surge"], stabilityTarget: 8 }));
+    const hurt = endTurn(createCampaign(["a"], 5, data), data);
+    const rush = playWith(hurt, "restart", data);
+    const healed = playWith(playWith(hurt, "status-page", data), "restart", data);
+    expect(healed.battle.harm).toBe(4);
+    expect(healed.totalHarm).toBe(14);
+    expect(rankRun(healed, data).score).toBe(rankRun(rush, data).score);
+  });
+
+  test("sudden resolution names and actual impact survive snapshot restore", () => {
+    const data = dataFor(encounter("a", { jevDeck: ["data-corruption"], startingDeck: ["restart"] }));
+    const before = createCampaign(["a"], 5, data);
+    before.battle.threat = null;
+    before.battle.stability = 5;
+    const after = endTurn(before, data);
+    expect(after.battle.resolution).toEqual([{ name: "Data corruption", harm: 20, stabilityDamage: 5, countered: false }]);
+    expect(after.battle.stats.damageTaken).toBe(20);
+    expect(selectPlayerView(after, data).surpriseRisk).toEqual({ harm: 20, stabilityDamage: 10 });
+    expect(restoreCampaign(after, data).ok).toBe(true);
+  });
+
+  test("completed results preserve each incident's stats for the full debrief", () => {
+    const definition = { startingDeck: ["restart"], stabilityTarget: 8, jevDeck: ["traffic-surge"] };
+    const data = dataFor(encounter("a", definition), encounter("b", definition));
+    let state = playWith(createCampaign(["a", "b"], 5, data), "restart", data);
+    state = must(applyCommand(state, { type: "draft_pick", cardId: state.draft![0]! }, data));
+    state = playWith(state, "restart", data);
+    expect(state.results.reduce((sum, result) => sum + result.stats.cardsPlayed, 0)).toBe(2);
+    expect(restoreCampaign(state, data).ok).toBe(true);
   });
 });

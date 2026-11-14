@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ScenarioManifestEntry } from "@incident-commander/contracts";
-import { CARD_CATALOG, type GameData } from "@incident-commander/cards";
-import { ENCOUNTERS, ENCOUNTER_REGISTRY, getEncounter } from "@incident-commander/scenarios";
+import { ENCOUNTERS, getEncounter } from "@incident-commander/scenarios";
 import { ensureGuestSession, fetchScenarios } from "./lib/api";
-import { listLocalRuns, type LocalRun } from "./lib/idb";
+import type { LocalRun } from "./lib/idb";
+import { GAME_DATA, purgeUnplayableLocalRuns } from "./lib/runs";
+import { purgeStaleRecords } from "./lib/records";
 import { startNewSession, resumeSession, type RunSession } from "./engine/session";
 import { ShiftSelection } from "./screens/ShiftSelection";
 import { TableScreen } from "./screens/TableScreen";
@@ -45,10 +46,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
 
-  const data: GameData = useMemo(
-    () => ({ catalog: CARD_CATALOG, encounters: ENCOUNTER_REGISTRY }),
-    [],
-  );
+  const data = GAME_DATA;
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, "", path);
@@ -57,13 +55,16 @@ export function App() {
 
   const refreshLocals = useCallback(async () => {
     try {
-      setLocals(await listLocalRuns());
+      purgeStaleRecords(
+        Object.values(data.encounters).map((encounter) => ({ id: encounter.id, version: encounter.version })),
+      );
+      setLocals(await purgeUnplayableLocalRuns());
     } catch {
       setLocals([]);
     } finally {
       setLocalsReady(true);
     }
-  }, []);
+  }, [data]);
 
   useEffect(() => {
     void (async () => {
@@ -114,14 +115,15 @@ export function App() {
   }, [route, session, guestId, navigate, locals, localsReady, data, resuming]);
 
   const startNew = useCallback(
-    async (scenarioId?: string) => {
+    async (scenarioId?: string, remix = false) => {
       setBusy(true);
       setError(null);
       try {
         session?.destroy();
         const encounter = (scenarioId ? getEncounter(scenarioId) : undefined) ?? ENCOUNTERS[0];
         if (!encounter) throw new Error("No encounters are available.");
-        const next = await startNewSession({ encounter, guestId, data });
+        const seed = remix ? crypto.getRandomValues(new Uint32Array(1))[0] : encounter.seed;
+        const next = await startNewSession({ encounter, guestId, data, seed });
         next.setGuestId(guestId);
         next.start();
         setSession(next);
@@ -169,9 +171,10 @@ export function App() {
   if (route.name === "play" && session?.id === route.runId) {
     return (
       <TableScreen
+        key={session.id}
         session={session}
         onDebrief={() => void toDebrief(session.id)}
-        onRestart={() => void startNew(session.currentState.encounterIds[0])}
+        onRestart={() => void startNew(session.currentState.encounterIds[0], true)}
         onExit={() => navigate("/")}
       />
     );
@@ -184,7 +187,7 @@ export function App() {
         local={locals.find((record) => record.runId === route.runId) ?? null}
         data={data}
         onBack={() => navigate("/")}
-        onRetry={() => void startNew(data.encounters[locals.find((r) => r.runId === route.runId)?.checkpoint.state.encounterIds[0] ?? ""]?.id)}
+        onRetry={() => void startNew(data.encounters[locals.find((r) => r.runId === route.runId)?.checkpoint.state.encounterIds[0] ?? ""]?.id, true)}
       />
     );
   }

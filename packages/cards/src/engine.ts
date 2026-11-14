@@ -106,6 +106,9 @@ function chooseJevCard(
     let score = card.priority * 10;
     if (playerAhead && card.sudden) score += 24;
     if (playerAhead && card.harm >= 12) score += 10;
+    if (card.pierce && battle.ward >= 8) score += 14;
+    if (card.pierce && battle.stats.damagePrevented >= 8) score += 16;
+    if (card.sudden && battle.round >= 3) score += 14;
     if (card.tag === lastTag) score -= 8;
     if (card.dot && battle.dots.some((dot) => dot.cardId === card.id)) score -= 14;
     const jitter = pickIndex(seed, state, 1000);
@@ -123,31 +126,24 @@ function applyChaos(
   battle: BattleState,
   card: ChaosCard,
   threat: ThreatState | null,
-  seed: number,
   cursor: number,
 ): number {
-  const mitigation = (threat?.mitigated ?? 0) + battle.ward;
+  const mitigation = card.pierce ? 0 : (threat?.mitigated ?? 0) + battle.ward;
   const negated = threat?.negated ?? false;
   const harmTaken = negated ? 0 : Math.max(0, card.harm - mitigation);
   const overflow = Math.max(0, mitigation - card.harm);
   const stabilityTaken = negated ? 0 : Math.max(0, card.stabilityDamage - overflow);
   battle.harm += harmTaken;
+  battle.stats.damageTaken += harmTaken;
+  battle.resolution.push({ name: card.name, harm: harmTaken, stabilityDamage: Math.min(battle.stability, stabilityTaken), countered: negated });
   battle.stability = Math.max(0, battle.stability - stabilityTaken);
-  if (negated) battle.stats.threatsBlocked += 1;
-  else battle.stats.damagePrevented += Math.min(mitigation, card.harm);
+  if (!negated) battle.stats.damagePrevented += Math.min(mitigation, card.harm + card.stabilityDamage);
   battle.ward = 0;
+  if (negated) return cursor;
 
-  let state = cursor;
-  if (card.drainFocus) battle.focusNext = Math.max(0, battle.focusNext - card.drainFocus);
+  if (card.drainFocus) battle.focusNext -= card.drainFocus;
   if (card.drawPenalty) battle.drawPenalty += card.drawPenalty;
-  if (card.discard && battle.hand.length > 0) {
-    for (let index = 0; index < card.discard && battle.hand.length > 0; index += 1) {
-      const pick = pickIndex(seed, state, battle.hand.length);
-      state = pick.cursor;
-      const removed = battle.hand.splice(pick.index, 1)[0];
-      if (removed) battle.discardPile.push(removed);
-    }
-  }
+  if (card.discard) battle.drawPenalty += card.discard;
   if (card.dot) {
     battle.dots.push({
       cardId: card.id,
@@ -156,7 +152,7 @@ function applyChaos(
       stabilityDamage: card.dot.stabilityDamage,
     });
   }
-  return state;
+  return cursor;
 }
 
 function createBattle(
@@ -186,12 +182,14 @@ function createBattle(
     ward: 0,
     dots: [],
     warRoom: false,
+    nextContainBonus: 0,
+    resolution: [],
     drawPenalty: 0,
     jevHand: [],
     jevDrawPile: jevShuffle.items,
     jevDiscardPile: [],
     lastJevCardId: null,
-    stats: { cardsPlayed: 0, threatsBlocked: 0, damagePrevented: 0, jevCardsPlayed: 0 },
+    stats: { damageTaken: 0, cardsPlayed: 0, threatsBlocked: 0, damagePrevented: 0, jevCardsPlayed: 0 },
   };
   cursor = drawCards(battle, encounter.handSize, seed, cursor);
   cursor = drawJevHand(battle, encounter, seed, cursor);
@@ -254,9 +252,11 @@ function finishLost(state: CampaignState, reason: string): CampaignState {
   const battle = state.battle;
   battle.phase = "lost";
   state.phase = "failed";
+  state.totalHarm += battle.stats.damageTaken;
   state.results.push({
     encounterId: battle.encounterId,
     outcome: "lost",
+    stats: { ...battle.stats },
     rounds: battle.round,
     harm: battle.harm,
     stability: battle.stability,
@@ -271,16 +271,17 @@ function completeEncounter(state: CampaignState, data: GameData): CampaignState 
   state.results.push({
     encounterId: battle.encounterId,
     outcome: "won",
+    stats: { ...battle.stats },
     rounds: battle.round,
     harm: battle.harm,
     stability: battle.stability,
   });
-  state.totalHarm += battle.harm;
+  state.totalHarm += battle.stats.damageTaken;
   const nextId = state.encounterIds[state.index + 1];
   if (!nextId) {
     state.phase = "complete";
     state.draft = null;
-    log(state.log, battle.round, "good", "All incidents contained. You are clear.");
+    log(state.log, battle.round, "good", "Incident contained. You are clear.");
     return state;
   }
   const nextEncounter = requireEncounter(data, nextId);
@@ -313,7 +314,19 @@ function playCard(state: CampaignState, command: Extract<Command, { type: "play_
   battle.stats.cardsPlayed += 1;
 
   let cursor = next.cursor;
-  let stabilityGain = card.stability ?? 0;
+  const incoming = battle.threat ? chaosCard(data, battle.threat.cardId) : null;
+  const counter = !!(battle.threat && !battle.threat.negated && card.negateTag === incoming?.tag);
+  if (counter && battle.threat && incoming) {
+    battle.threat.negated = true;
+    battle.stats.threatsBlocked += 1;
+    battle.stats.damagePrevented += incoming.harm + incoming.stabilityDamage;
+    log(next.log, battle.round, "good", `${card.name} counters ${incoming.name}.`);
+  }
+  let stabilityGain = (card.stability ?? 0) + (counter ? card.negateBonusStability ?? 0 : 0);
+  if (card.kind === "contain" && !card.warRoom) {
+    stabilityGain += battle.nextContainBonus;
+    battle.nextContainBonus = 0;
+  }
   if (battle.warRoom && card.kind === "contain" && !card.warRoom) stabilityGain += 4;
   if (card.warRoom) battle.warRoom = true;
   if (card.comboTag && battle.threat) {
@@ -323,44 +336,69 @@ function playCard(state: CampaignState, command: Extract<Command, { type: "play_
       log(next.log, battle.round, "good", `${card.name}: +${card.comboTag.stability} against the ${incoming.tag} play.`);
     }
   }
+  if (card.kind === "contain" && !card.warRoom && battle.threat) {
+    stabilityGain = Math.max(0, stabilityGain - threatView(data, next, battle.threat).recoveryPenalty);
+  }
   battle.stability += stabilityGain;
+  if (card.prepareStability) battle.nextContainBonus += card.prepareStability;
   if (card.harmReduce) battle.harm = Math.max(0, battle.harm - card.harmReduce);
-  if (card.selfHarm) battle.harm += card.selfHarm;
+  if (card.selfHarm) { battle.harm += card.selfHarm; battle.stats.damageTaken += card.selfHarm; }
   if (card.focusNext) battle.focusNext += card.focusNext;
   if (card.draw) cursor = drawCards(battle, card.draw, next.seed, cursor);
   if (card.shield) {
     if (battle.threat) battle.threat.mitigated += card.shield;
     else battle.ward += card.shield;
   }
-  if (card.negateTag && battle.threat) {
-    const incoming = data.catalog[battle.threat.cardId];
-    if (incoming?.kind === "chaos" && incoming.tag === card.negateTag) {
-      battle.threat.negated = true;
-      log(next.log, battle.round, "good", `${card.name} counters ${incoming.name}.`);
+  if (card.purge) {
+    const before = battle.dots.length;
+    battle.dots =
+      card.purge === "all"
+        ? []
+        : battle.dots.filter((dot) => {
+            const source = data.catalog[dot.cardId];
+            return !(source?.kind === "chaos" && source.tag === card.purge);
+          });
+    const removed = before - battle.dots.length;
+    if (removed > 0) {
+      log(next.log, battle.round, "good", `${card.name} stopped ${removed} bleed${removed === 1 ? "" : "s"}.`);
     }
   }
   log(next.log, battle.round, "you", `${card.name}.`);
   next.cursor = cursor;
 
-  if (battle.stability >= encounter.stabilityTarget) return { ok: true, state: completeEncounter(next, data) };
   if (battle.harm >= encounter.harmBudget) {
     return { ok: true, state: finishLost(next, "Customer harm budget exhausted.") };
   }
+  if (battle.stability >= encounter.stabilityTarget) return { ok: true, state: completeEncounter(next, data) };
   return { ok: true, state: next };
 }
 
-function endTurn(state: CampaignState, data: GameData): CommandResult {
+function endTurn(
+  state: CampaignState,
+  data: GameData,
+  hold?: { cardId: string; index: number },
+): CommandResult {
   const encounter = requireEncounter(data, state.battle.encounterId);
   if (state.phase !== "battle" || state.battle.phase !== "player") {
     return { ok: false, reason: "WRONG_PHASE", message: "It is not your turn." };
+  }
+  if (hold) {
+    const held = state.battle.hand[hold.index];
+    if (!held || held !== hold.cardId) {
+      return { ok: false, reason: "CARD_NOT_IN_HAND", message: "That card is not in your hand." };
+    }
   }
   const next = structuredClone(state);
   const battle = next.battle;
   let cursor = next.cursor;
 
+  battle.resolution = [];
+  battle.nextContainBonus = 0;
   for (let index = battle.dots.length - 1; index >= 0; index -= 1) {
     const dot = battle.dots[index] as DotState;
     battle.harm += dot.harm;
+    battle.stats.damageTaken += dot.harm;
+    battle.resolution.push({ name: `${chaosCard(data, dot.cardId).name} bleed`, harm: dot.harm, stabilityDamage: Math.min(battle.stability, dot.stabilityDamage), countered: false });
     battle.stability = Math.max(0, battle.stability - dot.stabilityDamage);
     dot.roundsLeft -= 1;
     if (dot.roundsLeft <= 0) {
@@ -371,7 +409,7 @@ function endTurn(state: CampaignState, data: GameData): CommandResult {
 
   if (battle.threat) {
     const card = chaosCard(data, battle.threat.cardId);
-    cursor = applyChaos(battle, card, battle.threat, next.seed, cursor);
+    cursor = applyChaos(battle, card, battle.threat, cursor);
     log(
       next.log,
       battle.round,
@@ -382,7 +420,12 @@ function endTurn(state: CampaignState, data: GameData): CommandResult {
   }
 
   if (battle.harm >= encounter.harmBudget) {
+    next.cursor = cursor;
     return { ok: true, state: finishLost(next, "Customer harm budget exhausted.") };
+  }
+  if (battle.round >= encounter.maxRounds) {
+    next.cursor = cursor;
+    return { ok: true, state: finishLost(next, "The SLA window closed.") };
   }
 
   cursor = drawJevHand(battle, encounter, next.seed, cursor);
@@ -395,9 +438,10 @@ function endTurn(state: CampaignState, data: GameData): CommandResult {
   battle.stats.jevCardsPlayed += 1;
   const played = chaosCard(data, choice.cardId);
   if (played.sudden) {
-    cursor = applyChaos(battle, played, null, next.seed, cursor);
+    cursor = applyChaos(battle, played, null, cursor);
     log(next.log, battle.round, "jev", `${played.name} hits with no warning.`);
     if (battle.harm >= encounter.harmBudget) {
+      next.cursor = cursor;
       return { ok: true, state: finishLost(next, "Customer harm budget exhausted.") };
     }
   } else {
@@ -406,14 +450,27 @@ function endTurn(state: CampaignState, data: GameData): CommandResult {
   }
 
   battle.round += 1;
-  if (battle.round > encounter.maxRounds) {
-    return { ok: true, state: finishLost(next, "The SLA window closed.") };
-  }
   battle.focus = Math.max(0, encounter.focusPerTurn + battle.focusNext);
   battle.focusNext = 0;
-  cursor = drawCards(battle, Math.max(0, encounter.handSize - battle.hand.length - battle.drawPenalty), next.seed, cursor);
+  let kept: string | null = null;
+  if (hold) {
+    const cardId = battle.hand[hold.index];
+    if (cardId && cardId === hold.cardId) {
+      kept = cardId;
+      battle.hand.splice(hold.index, 1);
+    }
+  }
+  battle.discardPile.push(...battle.hand);
+  battle.hand = kept ? [kept] : [];
+  cursor = drawCards(
+    battle,
+    Math.max(0, encounter.handSize - (kept ? 1 : 0) - battle.drawPenalty),
+    next.seed,
+    cursor,
+  );
   battle.drawPenalty = 0;
   next.cursor = cursor;
+  if (kept) log(next.log, battle.round, "you", `Held ${playerCard(data, kept).name}.`);
   log(next.log, battle.round, "system", `Round ${battle.round}.`);
   return { ok: true, state: next };
 }
@@ -451,7 +508,13 @@ export function applyCommand(state: CampaignState, command: Command, data: GameD
     case "play_card":
       return playCard(state, command, data);
     case "end_turn":
-      return endTurn(state, data);
+      return endTurn(
+        state,
+        data,
+        command.holdCardId != null && command.holdIndex != null
+          ? { cardId: command.holdCardId, index: command.holdIndex }
+          : undefined,
+      );
     case "draft_pick":
       return draftPick(state, command, data);
     default:
@@ -477,7 +540,7 @@ export function toRunOutcome(state: CampaignState) {
 
 function threatView(data: GameData, state: CampaignState, threat: ThreatState): ThreatView {
   const card = chaosCard(data, threat.cardId);
-  const mitigation = threat.mitigated + state.battle.ward;
+  const mitigation = card.pierce ? 0 : threat.mitigated + state.battle.ward;
   const overflow = Math.max(0, mitigation - card.harm);
   return {
     cardId: card.id,
@@ -487,24 +550,30 @@ function threatView(data: GameData, state: CampaignState, threat: ThreatState): 
     text: card.text,
     harm: card.harm,
     stabilityDamage: card.stabilityDamage,
+    pierce: card.pierce ?? false,
     mitigated: threat.mitigated,
     ward: state.battle.ward,
     projectedHarm: threat.negated ? 0 : Math.max(0, card.harm - mitigation),
     projectedStability: threat.negated ? 0 : Math.max(0, card.stabilityDamage - overflow),
     negated: threat.negated,
-    drainFocus: card.drainFocus ?? 0,
+    recoveryPenalty: threat.negated || mitigation >= card.harm + card.stabilityDamage ? 0 : card.recoveryPenalty ?? 0,
+    drainFocus: threat.negated ? 0 : card.drainFocus ?? 0,
+    drawPenalty: threat.negated ? 0 : (card.drawPenalty ?? 0) + (card.discard ?? 0),
+    bleed: threat.negated ? null : card.dot ?? null,
   };
 }
 
 export function selectPlayerView(state: CampaignState, data: GameData): PlayerView {
   const encounter = requireEncounter(data, state.battle.encounterId);
   const battle = state.battle;
+  const sudden = encounter.jevDeck.map((id) => chaosCard(data, id)).filter((card) => card.sudden);
   const yourTurn = state.phase === "battle" && battle.phase === "player";
   return {
     encounterId: encounter.id,
     encounterTitle: encounter.title,
     encounterSummary: encounter.summary,
     encounterDifficulty: encounter.difficulty,
+    surpriseRisk: sudden.length ? { harm: Math.max(...sudden.map((card) => card.harm)), stabilityDamage: Math.max(...sudden.map((card) => card.stabilityDamage)) } : null,
     encounterIndex: state.index,
     encounterCount: state.encounterIds.length,
     round: battle.round,
@@ -518,6 +587,8 @@ export function selectPlayerView(state: CampaignState, data: GameData): PlayerVi
     focus: battle.focus,
     focusNext: battle.focusNext,
     warRoom: battle.warRoom,
+    nextContainBonus: battle.nextContainBonus,
+    resolution: battle.resolution,
     hand: battle.hand.map((cardId) => {
       const card = playerCard(data, cardId);
       const affordable = yourTurn && card.cost <= battle.focus;
@@ -537,6 +608,7 @@ export function selectPlayerView(state: CampaignState, data: GameData): PlayerVi
       name: chaosCard(data, dot.cardId).name,
       roundsLeft: dot.roundsLeft,
       harm: dot.harm,
+      stabilityDamage: dot.stabilityDamage,
     })),
     lastJevCardId: battle.lastJevCardId,
     jevDeckCount: battle.jevDrawPile.length + battle.jevHand.length + battle.jevDiscardPile.length,
@@ -545,5 +617,6 @@ export function selectPlayerView(state: CampaignState, data: GameData): PlayerVi
     results: state.results,
     totalHarm: state.totalHarm,
     log: state.log.slice(-30),
+    briefing: encounter.briefing,
   };
 }

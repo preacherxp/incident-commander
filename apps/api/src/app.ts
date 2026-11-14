@@ -47,7 +47,7 @@ import {
   type EncounterDefinition,
   type GameData,
 } from "@incident-commander/cards";
-import { encounterOrder, validateEncounter } from "@incident-commander/scenarios";
+import { ENCOUNTER_REGISTRY, encounterOrder, validateEncounter } from "@incident-commander/scenarios";
 import type { JevVoice } from "@incident-commander/ai";
 import { ApiError, errorBody } from "./errors";
 import { establishGuest, guestSessionResponse, resolveGuest } from "./auth";
@@ -207,6 +207,8 @@ export function createApp(deps: AppDependencies): Hono<{ Variables: Variables }>
     const rows = await listScenarioVersions(db);
     const encounters: Record<string, EncounterDefinition> = {};
     for (const row of rows) {
+      const current = ENCOUNTER_REGISTRY[row.id];
+      if (!current || current.version !== row.version) continue;
       const result = validateEncounter(row.definition);
       if (result.ok) encounters[row.id] = result.encounter;
     }
@@ -251,7 +253,14 @@ export function createApp(deps: AppDependencies): Hono<{ Variables: Variables }>
 
   app.get("/api/v1/scenarios", async (c) => {
     const rows = await listScenarioVersions(db);
-    return c.json(rows.filter((row) => validateEncounter(row.definition).ok).map(manifestFromDefinition));
+    return c.json(
+      rows
+        .filter((row) => {
+          const current = ENCOUNTER_REGISTRY[row.id];
+          return current?.version === row.version && validateEncounter(row.definition).ok;
+        })
+        .map(manifestFromDefinition),
+    );
   });
 
   app.post("/api/v1/guest-session", async (c) => {

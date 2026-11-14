@@ -1,84 +1,109 @@
 # Incident Commander
 
-A deterministic, single-player browser incident-management game. You take an on-call shift during a
-checkout outage, work out why it is failing, contain customer impact, restore sustained service, and
-read a scored debrief. Two incidents ship: **Friday, 16:58** (express checkout is leaking sessions on
-the new release) and **Saturday, 02:14** (express is already off and something else is holding the
-connections). Pick a shift, beat your best time, and try not to follow Jev off a cliff.
+A deterministic, single-player card game about running an outage while an adversarial AI — **Jev** —
+throws the incident at you. Jev telegraphs its next play; you spend focus on cards to contain the
+damage, counter the play, or push stability back up. Clear **Friday, 16:58** without burning the
+customer-harm budget. It is playable one-handed on a phone and scales up to a desktop war room.
 
-The simulation is a pure TypeScript engine with fixed 100&nbsp;ms ticks. Only `step` changes game
-outcomes. The React/Three.js presentation, the persistence API, and the command interpreter can
-neither invent nor shortcut an intervention.
+The battlefield is rendered in **Three.js**: a floating server city with live attack routes,
+shield domes, bloom lighting, and card-triggered energy bursts. Drag to orbit, reset the camera,
+or pause motion. The renderer loads separately, respects reduced-motion settings, and stops
+rendering offscreen. Cards and saves remain usable if WebGL is unavailable.
+
+The twist is the opponent: Jev is not a hint system, it is the thing breaking production. It reacts
+to how well you are doing, saves its worst plays for when you are ahead, and talks trash while it
+does it.
+
+## How a shift plays
+
+1. **Read.** Every round Jev reveals its next card. Tags (`load`, `deploy`, `infra`, `people`,
+   `sudden`) tell you what counters it.
+2. **Play.** You have 3 focus and a five-card hand. Contain cards add stability, communicate cards
+   cut harm, respond cards block or negate the incoming play, recover cards draw and ramp focus.
+3. **End the round.** Jev strikes. You may keep one unplayed card; the rest are discarded and you
+   draw a fresh hand. Focus refills each round. Sudden cards ignore the telegraph entirely. The
+   forecast includes surprise damage, so an empty telegraph is a defensive turn.
+4. **Finish.** Reach 100 stability to contain the incident. Lose at 80 harm or when the ninth round
+   closes. The debrief ranks the shift.
+
+Matching counters cancel the entire incoming play, including its bleed and disruption effects. The
+table highlights counters and combos, forecasts known damage plus the surprise cap, and shows the
+result of each play. A shift briefing appears once at the start. **Run it again** starts a fresh
+shuffle; its seed is saved, so that run still replays exactly.
+
+Selected threats disrupt contain gains until fully shielded or countered. *Open the runbook*
+sets up +12 stability on your next contain this round; *Read the logs* draws two cards and sets
+up +4. Setup bonuses expire at round end. Surprise is included in the forecast number, and named impacts
+remain visible afterward. Rank rewards speed, counters, and damage prevented; healing reduces
+current harm but cannot erase damage taken. Debrief statistics cover the whole run. The starter
+deck includes *Fail over the region* so an infra telegraph is a choice, not a draw check.
+
+On phones, tap a compact card to inspect it, then tap **Play**. Optional synthesized sound cues
+are controlled by **Sound on/off** in the header. Motion controls and reduced-motion support
+remain available.
+
+The live product is one polished shift: **Friday, 16:58**. Later incidents remain in the repo as
+unpublished drafts. Older saves remain on the device but cannot be resumed under the new rules.
+
+## Fault modes
+
+Friday mixes both answers so the one shift teaches the whole table:
+
+- **Deploy faults** leak and drift. Bleeds keep ticking until they expire, and *Roll back* or
+  *Freeze the pipeline* shut them down.
+- **Load faults** can **pierce shields**: rate-limiting does nothing, so you negate the play with
+  *Trip the circuit breaker*. *Fail over the region* answers infra. One sudden card can land with
+  no telegraph; the forecast already includes it.
+
+## Determinism and replay
+
+The game engine (`packages/cards`) is pure TypeScript. Every shuffle and every opponent choice is
+derived from the run seed and a single monotonic cursor, so the same command log always produces the
+same state. Only commands change outcomes; the presentation layer cannot shortcut one. Runs persist
+as an immutable input log plus checkpoints, on the device (IndexedDB) and on the server, and a full
+run can be reconstructed from it.
+
+Jev's dialogue is the one non-deterministic part, and it is deliberately outside the simulation: it
+is fetched from OpenRouter for flavour, with deterministic canned lines as the fallback. It never
+affects a card, a draw, or a result.
 
 ## Repository layout
 
 | Path | Responsibility |
 |---|---|
-| `packages/contracts` | Shared Zod DTOs, input/action vocabulary, canonical JSON + SHA-256 |
-| `packages/scenarios` | Versioned scenario schema, shared actions/topology, and the authored incidents |
-| `packages/sim` | Pure deterministic engine: requests, operations, recovery, replay, player view |
-| `packages/db` | Drizzle schema, SQL migrations, connection factory, run repository, seed |
-| `packages/ai` | Provider-independent interpreter, OpenRouter adapter, deterministic fake |
-| `apps/api` | Hono API: guest ownership, persistence transactions, interpretation |
-| `apps/web` | React + Vite UI, engine coordinator, IndexedDB outbox, R3F board |
-| `tests/e2e` | Playwright scenario flows |
-| `infra/compose.yaml` | Local PostgreSQL 17 service |
-| `docs` | Decisions, scenario authoring, operations, verification |
+| `packages/contracts` | Zod DTOs, command vocabulary, canonical JSON + SHA-256 |
+| `packages/cards` | Card catalog, deterministic engine, campaign/draft, ranking, checkpoints |
+| `packages/scenarios` | The four authored incidents (decks, budgets, briefings) |
+| `packages/db` | Drizzle schema, migrations, run repository, seed |
+| `packages/ai` | Jev's OpenRouter chat voice plus deterministic fallback lines |
+| `apps/api` | Hono API: guest ownership, run persistence, Jev voice |
+| `apps/web` | Three.js arena with a React card HUD, threat forecasts, log, and debrief |
+| `tests/e2e` | Playwright card flows |
+| `docs` | Decisions, encounter authoring, operations, verification, deployment |
 
 ## Quickstart
 
-Requires Bun, Docker, and (for the 3D board) a WebGL-capable browser.
-
 ```sh
-bun install --frozen-lockfile
+bun install
 cp .env.example .env
-# Fill in local database settings. Command interpretation is optional:
-#   AI_PROVIDER=disabled keeps text commands unavailable but every action button works.
 docker compose --env-file .env -f infra/compose.yaml up -d db
-bun run db:migrate
-bun run db:seed
-bun run dev
+bun run db:migrate && bun run db:seed
+bun run dev            # API on :3000, web on :5173
 ```
 
-`bun run dev` starts the API (`:3000`) and Vite (`:5173`); Vite proxies `/api`. Open
-http://localhost:5173.
+Open http://localhost:5173. The game is fully playable with `AI_PROVIDER=disabled`; set it to
+`openrouter` with a key to hear Jev improvise.
 
-## Scripts
-
-`dev` · `dev:web` · `dev:api` · `build` · `typecheck` · `lint` · `test` · `test:e2e` ·
-`db:generate` · `db:migrate` · `db:seed` · `db:reset` · `ai:smoke`
-
-## How you play
-
-Ask Jev, the incident analyst, what is happening. Jev reads the live incident, explains the most
-likely bottleneck, and suggests one move; nothing runs until you approve it. Four actions are
-available, either through Jev's suggestion or as manual buttons:
-
-- **Investigate sessions** — reveals the leak and the release responsible.
-- **Turn express off** — stops new leaks.
-- **Roll back to v42** — removes the faulty release.
-- **Recycle checkout** — releases the sessions already leaked.
-
-Two fixes are valid: roll back to v42, or turn express off and recycle. Recycle alone relapses;
-database pressure alone is never a fix. Hold healthy service for 15 seconds to win.
-
-## Deploy
-
-Production runs Caddy (TLS) → Bun app (API + built SPA) → PostgreSQL, with migrations as a one-shot.
+## Checks
 
 ```sh
-cp .env.production.example .env.production   # set POSTGRES_PASSWORD, DATABASE_URL, APP_ORIGIN
-bun run deploy:build
-bun run deploy:up
+bun run lint           # import boundaries, determinism, then typecheck
+bun test packages apps/api
+bun run test:e2e
+bun run --filter @incident-commander/scenarios balance   # every start winnable, none passive-safe
 ```
 
-Public hostname `incident.purecode.sh`; Caddy issues TLS automatically once DNS points at the host.
-Full runbook (DNS, backups, upgrade/rollback, troubleshooting): `docs/deployment.md`.
+The Playwright suite includes a phone-sized project (`mobile.spec.ts`) that plays a full round with
+touch input, so the layout is verified rather than assumed.
 
-## Status
-
-Implemented and verified: a pure deterministic engine with both recovery routes, a Jev-first
-interface backed by the OpenRouter Decisions API (structured explain + propose, never executes),
-guest-owned persistence with exact idempotent retry, replay, factual debrief, and a DOM board
-fallback. `AI_PROVIDER=disabled` degrades only text interpretation; the action buttons always work.
-See `docs/verification-report.md` for exactly what was and was not exercised.
+Deployment (Docker + Caddy) is documented in `docs/deployment.md`.

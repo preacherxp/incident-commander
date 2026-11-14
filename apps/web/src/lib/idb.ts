@@ -54,9 +54,9 @@ async function withStore<T>(
   return new Promise<T>((resolve, reject) => {
     const transaction = db.transaction(STORE, mode);
     const request = run(transaction.objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    transaction.oncomplete = () => db.close();
+    transaction.oncomplete = () => { db.close(); resolve(request.result); };
+    transaction.onabort = () => { db.close(); reject(transaction.error ?? new Error("Local save was aborted.")); };
+    transaction.onerror = () => { db.close(); reject(transaction.error ?? request.error); };
   });
 }
 

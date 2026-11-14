@@ -9,15 +9,19 @@ const TAG_LABEL: Record<string, string> = {
 };
 
 export function ThreatCard({ threat }: { threat: ThreatView }) {
-  const blocked = threat.mitigated + threat.ward;
+  const blocked = threat.pierce ? 0 : threat.mitigated + threat.ward;
   return (
     <article
-      className={`card-face threat-frame w-[12.5rem] ${threat.negated ? "" : "threat-pulse"}`}
+      className={`card-face threat-frame ${threat.negated ? "threat-countered" : "threat-pulse"}`}
       aria-label={`Incoming threat: ${threat.name}`}
     >
+      <p className="label mb-3">{threat.negated ? "✓ Play neutralized" : "Jev’s next move"}</p>
       <div className="flex items-center justify-between">
-        <span className={`chip ${threat.tag === "sudden" ? "chip-threat" : ""}`}>
-          {TAG_LABEL[threat.tag] ?? threat.tag}
+        <span className="flex flex-wrap items-center gap-2">
+          <span className={`chip ${threat.tag === "sudden" ? "chip-threat" : ""}`}>
+            {TAG_LABEL[threat.tag] ?? threat.tag}
+          </span>
+          {threat.pierce ? <span className="chip chip-threat">pierces shields</span> : null}
         </span>
         <span className="card-glyph text-threat" aria-hidden>
           {threat.glyph}
@@ -47,7 +51,20 @@ export function ThreatCard({ threat }: { threat: ThreatView }) {
             <dd className="metric text-warn">−{threat.drainFocus}</dd>
           </div>
         ) : null}
+        {threat.drawPenalty > 0 ? (
+          <div className="flex items-baseline justify-between">
+            <dt className="label">Next hand</dt>
+            <dd className="metric text-warn">−{threat.drawPenalty} cards</dd>
+          </div>
+        ) : null}
+        {threat.bleed ? (
+          <div className="flex items-baseline justify-between gap-2">
+            <dt className="label">Adds a bleed</dt>
+            <dd className="metric text-threat">+{threat.bleed.harm} harm × {threat.bleed.rounds}r</dd>
+          </div>
+        ) : null}
       </dl>
+      {threat.recoveryPenalty > 0 ? <p className="recovery-lock"><strong>Recovery disrupted</strong> Contain gains −{threat.recoveryPenalty}. {threat.pierce ? "Counter to restore." : "Fully shield or counter to restore."}</p> : null}
       <span className={`card-kind ${threat.negated ? "kind-recover" : "kind-chaos"}`}>
         {threat.negated ? "countered" : "hits when you end the round"}
       </span>

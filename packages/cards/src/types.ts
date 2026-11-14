@@ -1,5 +1,5 @@
-export const CARDS_ENGINE_VERSION = 2;
-export const CAMPAIGN_STATE_VERSION = 2;
+export const CARDS_ENGINE_VERSION = 5;
+export const CAMPAIGN_STATE_VERSION = 3;
 export const JEV_HAND_SIZE = 3;
 
 export const THREAT_TAGS = ["load", "deploy", "infra", "people", "sudden"] as const;
@@ -21,8 +21,10 @@ export type PlayerCard = {
   focusNext?: number;
   shield?: number;
   negateTag?: ThreatTag;
+  purge?: "all" | ThreatTag;
   negateBonusStability?: number;
   warRoom?: boolean;
+  prepareStability?: number;
   selfHarm?: number;
   comboTag?: { tag: ThreatTag; stability: number };
 };
@@ -36,12 +38,14 @@ export type ChaosCard = {
   tag: ThreatTag;
   harm: number;
   stabilityDamage: number;
+  pierce?: boolean;
   sudden?: boolean;
   drainFocus?: number;
   discard?: number;
   drawPenalty?: number;
   dot?: { harm: number; stabilityDamage: number; rounds: number };
   priority: number;
+  recoveryPenalty?: number;
 };
 
 export type CardDefinition = PlayerCard | ChaosCard;
@@ -90,7 +94,10 @@ export type DotState = {
   stabilityDamage: number;
 };
 
+export type Resolution = { name: string; harm: number; stabilityDamage: number; countered: boolean };
+
 export type BattleStats = {
+  damageTaken: number;
   cardsPlayed: number;
   threatsBlocked: number;
   damagePrevented: number;
@@ -112,6 +119,8 @@ export type BattleState = {
   ward: number;
   dots: DotState[];
   warRoom: boolean;
+  nextContainBonus: number;
+  resolution: Resolution[];
   drawPenalty: number;
   jevHand: string[];
   jevDrawPile: string[];
@@ -121,6 +130,7 @@ export type BattleState = {
 };
 
 export type EncounterResult = {
+  stats: BattleStats;
   encounterId: string;
   outcome: "won" | "lost";
   rounds: number;
@@ -146,7 +156,7 @@ export type CampaignState = {
 
 export type Command =
   | { type: "play_card"; cardId: string; handIndex: number }
-  | { type: "end_turn" }
+  | { type: "end_turn"; holdCardId?: string; holdIndex?: number }
   | { type: "draft_pick"; cardId: string };
 
 export type CommandResult =
@@ -165,12 +175,16 @@ export type ThreatView = {
   text: string;
   harm: number;
   stabilityDamage: number;
+  pierce: boolean;
   mitigated: number;
   ward: number;
   projectedHarm: number;
   projectedStability: number;
   negated: boolean;
+  recoveryPenalty: number;
   drainFocus: number;
+  drawPenalty: number;
+  bleed: { harm: number; stabilityDamage: number; rounds: number } | null;
 };
 
 export type HandCardView = PlayerCard & { playable: boolean; reason: string | null };
@@ -180,6 +194,7 @@ export type PlayerView = {
   encounterTitle: string;
   encounterSummary: string;
   encounterDifficulty: string;
+  surpriseRisk: { harm: number; stabilityDamage: number } | null;
   encounterIndex: number;
   encounterCount: number;
   round: number;
@@ -193,13 +208,15 @@ export type PlayerView = {
   focus: number;
   focusNext: number;
   warRoom: boolean;
+  nextContainBonus: number;
+  resolution: Resolution[];
   hand: HandCardView[];
   drawCount: number;
   discardCount: number;
   deckCount: number;
   threat: ThreatView | null;
   ward: number;
-  dots: Array<{ cardId: string; name: string; roundsLeft: number; harm: number }>;
+  dots: Array<{ cardId: string; name: string; roundsLeft: number; harm: number; stabilityDamage: number }>;
   lastJevCardId: string | null;
   jevDeckCount: number;
   stats: BattleStats;
@@ -207,4 +224,5 @@ export type PlayerView = {
   results: EncounterResult[];
   totalHarm: number;
   log: LogEntry[];
+  briefing: EncounterDefinition["briefing"];
 };

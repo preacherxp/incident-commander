@@ -11,6 +11,7 @@ export default defineConfig({
     baseURL: "http://localhost:5173",
     viewport: { width: 1360, height: 900 },
     trace: "retain-on-failure",
+    launchOptions: { args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [

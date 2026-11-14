@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export type PlayCardCommand = { type: "play_card"; cardId: string; handIndex: number };
-export type EndTurnCommand = { type: "end_turn" };
+export type EndTurnCommand = { type: "end_turn"; holdCardId?: string; holdIndex?: number };
 export type DraftPickCommand = { type: "draft_pick"; cardId: string };
 export type Command = PlayCardCommand | EndTurnCommand | DraftPickCommand;
 
@@ -29,7 +29,13 @@ const playCardSchema = z
   })
   .strict();
 
-const endTurnSchema = z.object({ type: z.literal("end_turn") }).strict();
+const endTurnSchema = z
+  .object({
+    type: z.literal("end_turn"),
+    holdCardId: z.string().min(1).max(64).optional(),
+    holdIndex: z.number().int().min(0).max(23).optional(),
+  })
+  .strict();
 
 const draftPickSchema = z
   .object({ type: z.literal("draft_pick"), cardId: z.string().min(1).max(64) })
@@ -48,7 +54,9 @@ export function toCommand(input: RunInput): Command {
     case "play_card":
       return { type: "play_card", cardId: input.cardId, handIndex: input.handIndex };
     case "end_turn":
-      return { type: "end_turn" };
+      return input.holdCardId != null && input.holdIndex != null
+        ? { type: "end_turn", holdCardId: input.holdCardId, holdIndex: input.holdIndex }
+        : { type: "end_turn" };
     case "draft_pick":
       return { type: "draft_pick", cardId: input.cardId };
   }
@@ -59,7 +67,7 @@ export function describeCommand(command: Command): string {
     case "play_card":
       return `play ${command.cardId}`;
     case "end_turn":
-      return "end turn";
+      return command.holdCardId ? `end turn, hold ${command.holdCardId}` : "end turn";
     case "draft_pick":
       return `draft ${command.cardId}`;
   }

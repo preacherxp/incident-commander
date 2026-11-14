@@ -52,8 +52,9 @@ bun run deploy:up
 | `APP_ORIGIN` | Exact origin enforced on state-changing requests; must be `https://<APP_DOMAIN>`. |
 | `POSTGRES_PASSWORD` | Initializes the PostgreSQL data directory; irrelevant on an existing volume. |
 | `DATABASE_URL` | App/migrate connection string; host is `db` inside Compose. |
-| `AI_PROVIDER` | `openrouter` or `disabled`. Disabled keeps every action button working. |
+| `AI_PROVIDER` | `openrouter` or `disabled`. Disabled keeps Jev on deterministic canned lines. |
 | `OPENROUTER_API_KEY` | Backend-only credential. Never exposed to the browser bundle. |
+| `OPENROUTER_VOICE_MODEL_ID` | Pinned chat model for Jev's dialogue. |
 | `WEB_DIST_PATH` | Points the API at the built SPA. Set to `/app/apps/web/dist` in Compose. |
 
 Never put a secret in a `VITE_` variable. `.env.production` is gitignored.

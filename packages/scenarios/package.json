@@ -9,7 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "balance": "bun test/balance.ts"
   },
   "dependencies": {
     "@incident-commander/cards": "workspace:*",

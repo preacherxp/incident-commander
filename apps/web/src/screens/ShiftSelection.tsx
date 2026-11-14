@@ -2,6 +2,8 @@ import type { ScenarioManifestEntry } from "@incident-commander/contracts";
 import { ENCOUNTERS, getEncounter } from "@incident-commander/scenarios";
 import type { LocalRun } from "../lib/idb";
 import { readRecord } from "../lib/records";
+import { isPlayableRun } from "../lib/runs";
+import { IncidentMap } from "../components/IncidentMap";
 
 type Props = {
   scenarios: ScenarioManifestEntry[];
@@ -21,6 +23,7 @@ function statusLabel(record: LocalRun): string {
 }
 
 export function ShiftSelection({ scenarios, locals, busy, error, onStart, onResume }: Props) {
+  const judged = locals.filter(isPlayableRun);
   const playable = scenarios.filter((entry) => getEncounter(entry.id, entry.version) !== undefined);
   const options =
     playable.length > 0
@@ -38,60 +41,56 @@ export function ShiftSelection({ scenarios, locals, busy, error, onStart, onResu
 
   return (
     <main className="min-h-full pb-16">
-      <header className="border-b rule">
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 md:flex-row md:items-end md:justify-between md:px-10">
+      <header className="shift-hero shift-hero-3d">
+        <div className="shift-brand"><span className="command-mark" aria-hidden>⌘</span><span>INCIDENT COMMANDER</span><span className="chip ml-auto">You vs. Jev</span></div>
+        <div className="hero-content">
           <div>
-            <p className="label">Incident Commander</p>
-            <h1 className="mt-2 text-5xl leading-[1.05] md:text-6xl">
-              Out-call the AI
-              <br />
-              that owns the outage.
-            </h1>
-            <p className="mt-4 max-w-xl text-ink-soft">
-              A deck-building incident game. Jev is the adversary: it telegraphs its next play, and you
-              counter with the cards in your hand. Clear three shifts without burning the harm budget.
-            </p>
+            <p className="label text-threat"><span className="live-dot bg-threat" /> Your city. Your cards. Your move.</p>
+            <h1>Out-call the AI.<br /><span>Save your weekend.</span></h1>
+            <p className="hero-description">A living server city. Three focus. One very smug AI.<br className="hidden sm:block" /> Play your cards. Counter the chaos. Bring production back to life.</p>
+            <button type="button" className="btn btn-primary hero-start" disabled={busy} onClick={() => onStart(options[0]?.id)}>{busy ? "Dealing…" : "Let’s play →"}</button>
+            <p className="hero-caption">One shift · read the telegraph · contain checkout</p>
           </div>
-          <div className="flex gap-2">
-            <span className="chip">turn based</span>
-            <span className="chip chip-accent">deterministic replay</span>
-            <span className="chip chip-threat">3 incidents</span>
+          <div className="hero-visual">
+            <div className="hero-versus"><span className="text-accent">YOU / COMMANDER</span><span>VS.</span><span className="text-threat">JEV / CHAOS</span></div>
+            <IncidentMap threatTag="deploy" bleeds={0} stability={32} stabilityTarget={70} />
+            <div className="hero-callout"><span>◈</span> “It’s Friday. What could possibly go wrong?”</div>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-6xl gap-8 px-6 py-10 md:grid-cols-[1fr_20rem] md:px-10">
-        <section className="space-y-4" aria-label="Incidents">
-          {options.map((entry, index) => {
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[1fr_16rem] md:py-10 md:px-10">
+        <section className="shift-options" aria-label="Incidents">
+          <div className="shift-section-title"><p className="label">This week’s incident</p><h2 className="text-2xl mt-1">One shift. Contain the outage.</h2></div>
+          {options.map((entry) => {
             const best = readRecord(entry.id, entry.version);
+            const encounter = getEncounter(entry.id);
             return (
               <article
                 key={`${entry.id}@${entry.version}`}
-                className="panel fade-up overflow-hidden"
-                style={{ animationDelay: `${index * 90}ms` }}
+                className="panel shift-option fade-up overflow-hidden"
               >
-                <div className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+                <div className="flex h-full flex-col gap-4 p-5">
+                  <div className="shift-number"><span>01</span><span className="label">Friday deploy</span></div>
                   <div className="max-w-xl">
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-2xl">{entry.title}</h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl">{entry.title}</h2>
                       <span className="chip">{entry.difficulty}</span>
                     </div>
                     <p className="mt-2 text-sm text-ink-soft">{entry.summary}</p>
-                    <p className="metric mt-3 text-[11px] text-ink-faint">
-                      {entry.id}@{entry.version}
-                    </p>
+                    <p className="metric mt-3 text-[11px] text-ink-soft">{encounter?.stabilityTarget} stability to win · {encounter?.harmBudget} harm limit · {encounter?.maxRounds} rounds</p>
                   </div>
-                  <div className="flex shrink-0 flex-col items-start gap-2 md:items-end">
+                  <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
                     {best ? (
                       <span className="chip chip-accent">
-                        best {best.grade} · {best.totalHarm} harm
+                        best {best.grade} · {best.score}/100
                       </span>
                     ) : (
                       <span className="chip">no run yet</span>
                     )}
                     <button
                       type="button"
-                      className="btn btn-primary min-w-40"
+                      className="btn min-h-11 w-full"
                       disabled={busy}
                       onClick={() => onStart(entry.id)}
                     >
@@ -108,7 +107,7 @@ export function ShiftSelection({ scenarios, locals, busy, error, onStart, onResu
             </p>
           ) : null}
 
-          <div className="panel-flat p-6">
+          <div className="panel-flat shift-howto p-4 sm:p-6">
             <h2 className="text-lg">How a shift plays</h2>
             <ol className="mt-3 grid gap-2 text-sm text-ink-soft md:grid-cols-3">
               <li className="rounded-lg border rule p-3">
@@ -121,43 +120,43 @@ export function ShiftSelection({ scenarios, locals, busy, error, onStart, onResu
               </li>
               <li className="rounded-lg border rule p-3">
                 <span className="label block">3 · End the round</span>
-                Whatever you blocked does not land. Whatever you missed, does.
+                Jev strikes. Keep one card if you want; the rest are discarded. Fresh focus.
               </li>
             </ol>
           </div>
         </section>
 
-        <aside className="panel flex flex-col p-5">
+        <aside className="panel h-fit flex flex-col p-5">
           <h2 className="text-lg">Saved runs</h2>
           <p className="mt-1 text-xs text-ink-soft">
-            Stored in this browser, tied to this guest. Reload-safe at every card.
+            Pick up where you left off. Your progress saves after every move.
           </p>
           <ul className="mt-4 space-y-3">
-            {locals.length === 0 ? (
+            {judged.length === 0 ? (
               <li className="text-sm text-ink-soft">No runs on this device yet.</li>
             ) : (
-              locals.map((record) => {
-                const encounter = getEncounter(record.checkpoint.state.encounterIds[0] ?? "");
-                return (
-                  <li key={record.runId} className="rounded-lg border rule p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm">{encounter?.title ?? "Unknown shift"}</span>
-                      <span className="chip">{statusLabel(record)}</span>
-                    </div>
-                    <p className="metric mt-1 text-[11px] text-ink-faint">
-                      {record.checkpoint.state.totalHarm} harm · {record.inputs.length} moves
-                    </p>
-                    <button
-                      type="button"
-                      className="btn mt-3 w-full"
-                      disabled={busy}
-                      onClick={() => onResume(record.runId)}
-                    >
-                      Resume
-                    </button>
-                  </li>
-                );
-              })
+              judged.map((record) => {
+                  const encounter = getEncounter(record.checkpoint.state.encounterIds[0] ?? "");
+                  return (
+                    <li key={record.runId} className="rounded-lg border rule p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm">{encounter?.title ?? "Unknown shift"}</span>
+                        <span className="chip">{statusLabel(record)}</span>
+                      </div>
+                      <p className="metric mt-1 text-[11px] text-ink-faint">
+                        {record.checkpoint.state.totalHarm} damage taken · {record.inputs.length} moves
+                      </p>
+                      <button
+                        type="button"
+                        className="btn mt-3 w-full"
+                        disabled={busy}
+                        onClick={() => onResume(record.runId)}
+                      >
+                        Resume
+                      </button>
+                    </li>
+                  );
+                })
             )}
           </ul>
         </aside>

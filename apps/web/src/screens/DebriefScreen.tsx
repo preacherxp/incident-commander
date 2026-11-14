@@ -7,6 +7,7 @@ import {
 } from "@incident-commander/cards";
 import type { LocalRun } from "../lib/idb";
 import { writeRecordIfBest, type RunRecord } from "../lib/records";
+import { isPlayableRun } from "../lib/runs";
 
 type Props = {
   runId: string;
@@ -37,6 +38,7 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
     setBestInfo(
       writeRecordIfBest(startId, version, {
         grade: rank.grade,
+        score: rank.score,
         totalHarm: state.totalHarm,
         encountersCleared: state.results.filter((result) => result.outcome === "won").length,
         outcome: state.phase === "complete" ? "won" : "lost",
@@ -45,7 +47,7 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
     );
   }, [state, rank, data]);
 
-  if (!local || !state || !rank) {
+  if (!local || !isPlayableRun(local) || !state || !rank) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-16">
         <h1 className="text-2xl">Debrief unavailable</h1>
@@ -63,31 +65,31 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
   return (
     <main className="min-h-full pb-16">
       <header className="border-b rule">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-6 px-6 py-10 md:px-10">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-4 px-4 py-8 sm:px-6 md:gap-6 md:py-10 md:px-10">
           <div>
             <p className="label">Debrief · {data.encounters[state.encounterIds[0] ?? ""]?.title ?? runId}</p>
-            <h1 className="mt-1 text-4xl">
-              {state.phase === "complete" ? "All incidents contained" : "The outage won"}
+            <h1 className="mt-1 text-3xl md:text-4xl">
+              {state.phase === "complete" ? "Incident contained" : "The outage won"}
             </h1>
             <p className="metric mt-2 text-xs text-ink-faint">
-              seed {state.seed} · {state.results.length} of {state.encounterIds.length} incidents played
+              seed {state.seed} · {state.results.reduce((sum, result) => sum + result.rounds, 0)} rounds
             </p>
           </div>
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-primary" onClick={onRetry}>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            <button type="button" className="btn btn-primary min-h-11 flex-1 sm:flex-none" onClick={onRetry}>
               Run it again
             </button>
-            <button type="button" className="btn" onClick={onBack}>
+            <button type="button" className="btn min-h-11 flex-1 sm:flex-none" onClick={onBack}>
               Shift selection
             </button>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-5xl gap-6 px-6 py-8 md:px-10 lg:grid-cols-[1fr_20rem]">
+      <div className="mx-auto grid max-w-5xl gap-6 px-4 py-6 sm:px-6 md:py-8 md:px-10 lg:grid-cols-[1fr_20rem]">
         <section className="space-y-4">
           <div className="panel p-5">
-            <h2 className="text-xl">Incidents</h2>
+            <h2 className="text-xl">This shift</h2>
             <ol className="mt-4 space-y-4">
               {state.results.map((result, index) => {
                 const encounter = data.encounters[result.encounterId];
@@ -103,7 +105,7 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
                       ) : null}
                     </div>
                     <p className="mt-2 text-sm text-ink-soft">
-                      {result.rounds} rounds · {result.harm} harm · stability {result.stability}
+                      {result.rounds} rounds · {result.stats.damageTaken} damage taken · {result.harm} final harm · {resultRank?.score}/100
                     </p>
                   </li>
                 );
@@ -133,12 +135,12 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
           <section className="panel p-5 text-center">
             <p className="label">Run rank</p>
             <p
-              className="metric mt-2 text-7xl leading-none"
+              className="metric mt-2 text-6xl leading-none lg:text-7xl"
               style={{ color: rank.grade === "F" ? "var(--color-threat)" : "var(--color-accent)" }}
             >
               {rank.grade}
             </p>
-            <p className="mt-2 text-sm">{rank.headline}</p>
+            <p className="mt-2 text-sm">{rank.headline} · {rank.score}/100</p>
             <ul className="mt-4 space-y-1 text-left text-xs text-ink-soft">
               {rank.reasons.map((reason) => (
                 <li key={reason}>{reason}</li>
@@ -148,7 +150,7 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
               <p className={`mt-3 text-xs ${bestInfo.isBest ? "text-accent" : "text-ink-faint"}`}>
                 {bestInfo.isBest
                   ? "New personal best."
-                  : `Best so far: ${bestInfo.best.grade} · ${bestInfo.best.totalHarm} harm`}
+                  : `Best so far: ${bestInfo.best.grade} · ${bestInfo.best.totalHarm} damage taken`}
               </p>
             ) : null}
           </section>
@@ -157,7 +159,7 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
             <h2 className="text-lg">Facts</h2>
             <dl className="mt-3 space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="label">Total harm</dt>
+                <dt className="label">Damage taken</dt>
                 <dd className="metric">{state.totalHarm}</dd>
               </div>
               <div className="flex justify-between">
@@ -166,11 +168,11 @@ export function DebriefScreen({ runId, local, data, onBack, onRetry }: Props) {
               </div>
               <div className="flex justify-between">
                 <dt className="label">Cards played</dt>
-                <dd className="metric">{state.battle.stats.cardsPlayed}</dd>
+                <dd className="metric">{state.results.reduce((sum, result) => sum + result.stats.cardsPlayed, 0)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="label">Threats blocked</dt>
-                <dd className="metric">{state.battle.stats.threatsBlocked}</dd>
+                <dd className="metric">{state.results.reduce((sum, result) => sum + result.stats.threatsBlocked, 0)}</dd>
               </div>
             </dl>
           </section>

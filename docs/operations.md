@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-Bun 1.4+, Docker (Compose), and a WebGL-capable browser for the 3D board.
+Bun 1.4+, Docker (Compose), and a modern browser. No GPU or WebGL is required; the incident map is
+plain SVG.
 
 ## First run
 
@@ -19,29 +20,35 @@ bun run dev
 The API reads `.env` from the repository root explicitly (`--env-file=../../.env`), so package
 scripts behave the same whether launched from the root or a workspace.
 
-## Command interpretation
+If the database was just (re)created, give it a couple of seconds before migrating — the compose
+healthcheck is fast, but the first connection can still race the server's startup.
 
-`AI_PROVIDER=disabled` is the default and requires no credential. Every core action has a button,
-and text commands report that interpretation is unavailable.
+## Jev's voice
 
-To enable the OpenRouter adapter:
+`AI_PROVIDER=disabled` is the default and requires no credential. Jev still speaks: the client and
+server both fall back to deterministic canned lines keyed by `(runId, cue, round)`.
+
+To let Jev improvise:
 
 ```sh
 # .env
 AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=...
-OPENROUTER_MODEL_ID=typesafe/jev-1.13
+OPENROUTER_VOICE_MODEL_ID=openai/gpt-4o-mini
 ```
 
-Then `bun run ai:smoke` to send a small labeled command set to the real provider. This makes paid
-external calls; run it only when you intend to. The API logs the returned model identifier and
-prompt version; raw command text is not logged.
+Voice is flavour only. It is requested after the fact for each cue (`threat_revealed`,
+`threat_blocked`, `victory`, …) and can never change a card, a draw, or a result. Requests are rate
+limited to 60 per guest per minute; if the provider errors, the canned line is used and play
+continues without interruption. Raw run state is summarised (round, meters, last cards) but the
+player's own text is never involved.
 
 ## Database lifecycle
 
 - Migrations: `bun run db:generate` (after schema edits) then `bun run db:migrate`. Migrations are
   applied explicitly and never on application startup.
-- Seed: `bun run db:seed` registers immutable scenario versions.
+- Seed: `bun run db:seed` registers immutable encounter versions and refuses to overwrite a version
+  whose content hash changed.
 - Reset (destroys all saves): `CONFIRM_DB_RESET=1 bun run db:reset`.
 - Ordinary container restarts preserve the named volume and therefore runs.
 
@@ -68,9 +75,12 @@ publicly reachable.
 
 - `DATABASE_URL is required` — the shell/package script did not load the root `.env`; use the root
   scripts, which pass `--env-file=../../.env`.
-- `Paused while interpreting command` never clears — a request was abandoned; use Cancel or retry.
-  The server ignores late responses after cancellation.
-- "Saved on this device; waiting to sync" — the API is unreachable. Gameplay continues; retries
-  resume automatically every 10 seconds and on pause/terminal transitions.
-- A revision conflict pauses and preserves the local branch. Choose a recovery path explicitly; the
-  client never merges input histories.
+- `connection refused` right after `db:reset` — Postgres is still starting; retry the migration.
+- "waiting to sync" in the header — the API is unreachable. Play continues offline from IndexedDB;
+  the client retries every 10 seconds and always finalizes a terminal run when the API returns.
+- A revision conflict shows a banner and preserves the local branch. The client never merges input
+  histories; finish or restart the local copy deliberately.
+- Jev's bubble shows a `canned` chip — the voice provider is disabled or failed. Nothing else is
+  affected.
+- A saved run cannot be resumed — it was created under a different engine version. Old runs are
+  intentionally rejected rather than replayed under new rules.

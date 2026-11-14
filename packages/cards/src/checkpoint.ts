@@ -23,6 +23,7 @@ const dotSchema = z
 
 const statsSchema = z
   .object({
+    damageTaken: z.number().int().min(0).max(99999),
     cardsPlayed: z.number().int().min(0).max(9999),
     threatsBlocked: z.number().int().min(0).max(9999),
     damagePrevented: z.number().int().min(0).max(99999),
@@ -38,7 +39,7 @@ const battleSchema = z
     stability: z.number().int().min(0).max(9999),
     harm: z.number().int().min(0).max(99999),
     focus: z.number().int().min(0).max(99),
-    focusNext: z.number().int().min(0).max(99),
+    focusNext: z.number().int().min(-99).max(99),
     hand: z.array(cardId).max(24),
     drawPile: z.array(cardId).max(300),
     discardPile: z.array(cardId).max(300),
@@ -46,6 +47,8 @@ const battleSchema = z
     ward: z.number().int().min(0).max(9999),
     dots: z.array(dotSchema).max(24),
     warRoom: z.boolean(),
+    nextContainBonus: z.number().int().min(0).max(9999),
+    resolution: z.array(z.object({ name: z.string().max(100), harm: z.number().int().min(0).max(99999), stabilityDamage: z.number().int().min(0).max(9999), countered: z.boolean() }).strict()).max(26),
     drawPenalty: z.number().int().min(0).max(9),
     jevHand: z.array(cardId).max(12),
     jevDrawPile: z.array(cardId).max(300),
@@ -59,6 +62,7 @@ const resultSchema = z
   .object({
     encounterId: z.string().min(1).max(64),
     outcome: z.enum(["won", "lost"]),
+    stats: statsSchema,
     rounds: z.number().int().min(0).max(99),
     harm: z.number().int().min(0).max(99999),
     stability: z.number().int().min(0).max(9999),

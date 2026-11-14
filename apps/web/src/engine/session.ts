@@ -61,6 +61,8 @@ export class RunSession {
   private syncing = false;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  private saveQueue: Promise<void> = Promise.resolve();
+  private pendingSaves = 0;
 
   constructor(config: SessionConfig) {
     this.runId = config.runId;
@@ -154,7 +156,7 @@ export class RunSession {
       runId: this.runId,
       guestId: this.guestId,
       scenarioId: this.state.encounterIds[0] ?? "",
-      scenarioVersion: "1.0.0",
+      scenarioVersion: this.data.encounters[this.state.encounterIds[0] ?? ""]?.version ?? "1.0.0",
       engineVersion: this.state.engineVersion,
       seed: this.state.seed,
       checkpoint: {
@@ -162,18 +164,23 @@ export class RunSession {
         throughSeq: this.inputs.length,
         state: this.state,
       },
-      inputs: this.inputs,
+      inputs: [...this.inputs],
       lastAckedRevision: this.lastAckedRevision,
       lastSyncedSeq: this.lastSyncedSeq,
       inFlight: this.inFlight,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
+    this.pendingSaves += 1;
+    const saved = this.saveQueue.then(() => putLocalRun(record));
+    this.saveQueue = saved.catch(() => {});
     try {
-      await putLocalRun(record);
-      if (this.saveStatus === "saving") this.setSaveStatus("saved");
+      await saved;
     } catch {
       this.setSaveStatus("error");
+    } finally {
+      this.pendingSaves -= 1;
+      if (this.pendingSaves === 0 && this.saveStatus === "saving") this.setSaveStatus("saved");
     }
   }
 
@@ -233,7 +240,6 @@ export class RunSession {
       this.lastAckedRevision = response.revision;
       this.lastSyncedSeq = response.lastInputSeq;
       this.inFlight = null;
-      this.setSaveStatus("saved");
       await this.persist();
     } catch (error) {
       if (error instanceof ApiClientError && error.code === "REVISION_CONFLICT") {
@@ -265,9 +271,11 @@ export async function startNewSession(options: {
   encounter: EncounterDefinition;
   guestId: string | null;
   data: GameData;
+  seed?: number;
 }): Promise<RunSession> {
   const encounterIds = encounterOrder(options.encounter.id);
-  const state = createCampaign(encounterIds, options.encounter.seed, options.data);
+  const seed = options.seed ?? options.encounter.seed;
+  const state = createCampaign(encounterIds, seed, options.data);
   let runId: string = crypto.randomUUID();
   let revision = 0;
   try {
@@ -276,7 +284,7 @@ export async function startNewSession(options: {
       scenarioId: options.encounter.id,
       scenarioVersion: options.encounter.version,
       engineVersion: options.encounter.engineVersion,
-      seed: options.encounter.seed,
+      seed,
     });
     runId = created.runId;
     revision = created.revision;
